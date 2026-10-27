@@ -1,0 +1,13 @@
+# reference media (not part of the app)
+Jev-Tetris.mp4
+Screenshot.png
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# local editor / tool config
+.claude/
+.DS_Store
