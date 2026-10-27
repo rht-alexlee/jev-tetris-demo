@@ -250,24 +250,6 @@ button.link {
   min-height: 18px;
 }
 
-/* --- badges --- */
-.badge {
-  font-weight: 800;
-  font-size: 12px;
-  letter-spacing: 1px;
-  padding: 6px 12px;
-  border-radius: 999px;
-}
-.badge.live {
-  color: #04120a;
-  background: var(--green);
-  box-shadow: 0 0 18px rgba(74, 222, 128, 0.5);
-}
-.badge.sim {
-  color: #1a1403;
-  background: var(--amber);
-}
-
 /* --- inference metrics --- */
 .infer-metrics {
   display: flex;
@@ -329,6 +311,11 @@ button.link {
   border: 1px solid rgba(250, 204, 21, 0.3);
   color: #fde68a;
   font-size: 12.5px;
+}
+.note.error {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fecaca;
 }
 
 .prob-list {

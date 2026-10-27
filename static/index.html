@@ -19,7 +19,6 @@
           </p>
         </div>
       </div>
-      <span id="source-badge" class="badge sim">SIMULATED</span>
     </header>
 
     <main class="layout">
@@ -30,7 +29,7 @@
           <label>
             Remote endpoint URL
             <input id="endpoint" type="text" autocomplete="off"
-              placeholder="https://your-vllm-host  (blank = SIMULATED)" />
+              placeholder="https://your-vllm-host  (required)" />
           </label>
           <label>
             Model name
@@ -43,8 +42,8 @@
           </label>
           <p class="hint">
             Posts to <code>&lt;endpoint&gt;/v1/systemone</code>. The key is sent
-            only to this local server, never embedded in the page. Leave the URL
-            blank to play against a deterministic local heuristic.
+            only to the demo server, never embedded in the page. A reachable
+            decision-model endpoint is required to run the demo.
           </p>
         </div>
 

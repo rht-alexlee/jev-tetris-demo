@@ -1,8 +1,8 @@
 // Decision layer + UI. Each piece triggers two structured /v1/systemone
 // "choice" decisions -- first an orientation (Keep / Rotate N times), then a
 // landing column (move N) -- after which the piece falls naturally under
-// gravity. Falls back to a deterministic local heuristic (SIMULATED) when no
-// endpoint is set or a call fails; never a silent fake result.
+// gravity. A reachable decision-model endpoint is required: if none is set or
+// a call fails, the run stops and surfaces the error (no local fallback).
 
 import { Game, COLS, ROWS, COLOR_OF, rotationCount } from "./tetris.js";
 
@@ -64,31 +64,6 @@ function buildRequest(game, stage, qid, instructions, options) {
   };
 }
 
-function softmax(scores, temperature = 1.6) {
-  const max = Math.max(...scores);
-  const exps = scores.map((s) => Math.exp((s - max) / temperature));
-  const sum = exps.reduce((a, b) => a + b, 0);
-  return exps.map((e) => e / sum);
-}
-
-function mockDecision(options, body) {
-  const probsArr = softmax(options.map((o) => o.score));
-  const probabilities = {};
-  options.forEach((o, i) => (probabilities[o.key] = probsArr[i]));
-  let topI = 0;
-  probsArr.forEach((v, i) => (topI = v > probsArr[topI] ? i : topI));
-  return {
-    source: "mock",
-    latency_ms: 10 + Math.random() * 25,
-    choiceKey: options[topI].key,
-    probabilities,
-    confidence: probsArr[topI],
-    note: "SIMULATED: deterministic local heuristic (no endpoint configured or call failed).",
-    request: body,
-    response: null,
-  };
-}
-
 async function liveDecision(cfg, body, qid, options) {
   const resp = await fetch("/api/decide", {
     method: "POST",
@@ -111,26 +86,20 @@ async function liveDecision(cfg, body, qid, options) {
   const probabilities = {};
   for (const o of options) probabilities[o.key] = answer.probabilities[o.key] ?? 0;
   return {
-    source: "live",
     latency_ms: data.response?.diagnostics?.timing?.total_ms ?? data.latency_ms,
     choiceKey: answer.choice,
     probabilities,
     confidence: answer.confidence,
-    note: null,
     request: body,
     response: data.response,
   };
 }
 
+// A reachable decision-model endpoint is required; failures propagate so the
+// run stops and surfaces the error (no local fallback).
 async function decide(cfg, body, qid, options) {
-  if (!cfg.endpoint) return mockDecision(options, body);
-  try {
-    return await liveDecision(cfg, body, qid, options);
-  } catch (err) {
-    const mock = mockDecision(options, body);
-    mock.note = `SIMULATED fallback - live call failed: ${err.message}`;
-    return mock;
-  }
+  if (!cfg.endpoint) throw new Error("no decision-model endpoint configured");
+  return liveDecision(cfg, body, qid, options);
 }
 
 // --- rendering --------------------------------------------------------------
@@ -236,12 +205,8 @@ function renderDecision(stage, options, decision) {
     list.appendChild(row);
   }
 
-  const badge = $("source-badge");
-  badge.textContent = decision.source === "live" ? "LIVE" : "SIMULATED";
-  badge.className = "badge " + (decision.source === "live" ? "live" : "sim");
   $("confidence").textContent = `${(decision.confidence * 100).toFixed(1)}%`;
-  $("note").textContent = decision.note || "";
-  $("note").style.display = decision.note ? "block" : "none";
+  $("note").style.display = "none";
   $("raw-json").textContent = JSON.stringify(
     { request: decision.request, response: decision.response },
     null,
@@ -330,7 +295,6 @@ class Controller {
     const orientChoices = oriOpts.map((o) => ({
       key: String(o.rotation),
       label: orientLabel(o.rotation),
-      score: o.best.score,
       features: o.best.features,
       desc: `${orientLabel(o.rotation)}: best landing ${feat(o.best.features)}.`,
     }));
@@ -361,7 +325,6 @@ class Controller {
     const colChoices = cols.map((p) => ({
       key: String(p.left),
       label: columnLabel(p.left),
-      score: p.score,
       features: p.features,
       desc: `move ${p.left}: ${feat(p.features)}.`,
       ox: p.ox,
@@ -385,10 +348,22 @@ class Controller {
     this.decided = true;
     this.updateStats();
     this.render();
-    this.setStatus(
-      `${d2.source === "live" ? "JEV" : "Heuristic"} chose ${orientLabel(rot)} + ${pick.label}`
-    );
+    this.setStatus(`JEV chose ${orientLabel(rot)} + ${pick.label}`);
     await sleep(180);
+  }
+
+  showError(msg) {
+    const n = $("note");
+    n.textContent = msg;
+    n.className = "note error";
+    n.style.display = "block";
+    this.setStatus(`Stopped: ${msg}`);
+  }
+
+  clearError() {
+    const n = $("note");
+    n.className = "note";
+    n.style.display = "none";
   }
 
   async runLoop() {
@@ -397,7 +372,13 @@ class Controller {
     const g = this.game;
     while (this.running && !g.over) {
       if (!this.decided) {
-        await this.decidePiece();
+        try {
+          await this.decidePiece();
+        } catch (err) {
+          this.showError(`model call failed - ${err.message}`);
+          this.running = false;
+          break;
+        }
         if (g.over || !this.running) break;
       }
       const { ms } = this.dropIntervalMs();
@@ -419,14 +400,19 @@ class Controller {
     this.looping = false;
     if (g.over) {
       this.running = false;
-      $("start").textContent = "Start";
       this.setStatus("Game over.");
       this.render();
     }
+    if (!this.running) $("start").textContent = "Start";
   }
 
   start() {
     if (this.running || this.game.over) return;
+    if (!this.config().endpoint) {
+      this.showError("Enter a decision-model endpoint URL to run the demo.");
+      return;
+    }
+    this.clearError();
     this.running = true;
     $("start").textContent = "Pause";
     this.setStatus("Running...");

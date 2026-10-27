@@ -8,11 +8,12 @@ vLLM, via the `structured_server.py` sidecar that exposes POST /v1/systemone).
 The front-end never talks to the model endpoint directly: it posts the
 compressed board state and candidate-move question here, and this server
 forwards it to `<endpoint>/v1/systemone` with the API key as a bearer token,
-so the key stays server-side.
+so the key stays server-side. A reachable decision-model endpoint is required
+for the demo to run.
 
 Zero third-party dependencies -- Python 3.10+ standard library only.
 
-    python app.py            # http://127.0.0.1:7860
+    python app.py            # binds 0.0.0.0:8760 (all interfaces)
     PORT=8000 python app.py
 """
 
@@ -24,8 +25,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HOST = os.environ.get("HOST", "127.0.0.1")
-PORT = int(os.environ.get("PORT", "7860"))
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8760"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 REQUEST_TIMEOUT = float(os.environ.get("JEV_TIMEOUT", "60"))
 
@@ -163,9 +164,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"JEV-plays-Tetris demo running at http://{HOST}:{PORT}")
-    print("Enter your endpoint / model / api-key in the UI, or leave blank for")
-    print("SIMULATED mode (deterministic local heuristic, no GPU needed).")
+    where = "all interfaces" if HOST in ("0.0.0.0", "::") else HOST
+    print(f"JEV-plays-Tetris demo listening on {HOST}:{PORT} ({where})", flush=True)
+    print(f"Open http://<this-host>:{PORT} and enter your decision-model", flush=True)
+    print("endpoint / model / api-key in the UI -- a reachable endpoint is", flush=True)
+    print("required for the demo to run.", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
