@@ -47,7 +47,9 @@ function boardRows(board) {
   return board.map((row) => row.map((v) => (v ? "#" : ".")).join(""));
 }
 
-// options: [{ key, label, desc, score }]
+// options: [{ key, label, desc, features }]
+// The /v1/systemone body only accepts state / questions / images / videos /
+// states / options -- any other top-level field (e.g. seed) is a 400.
 function buildRequest(game, stage, qid, instructions, options) {
   const criteria = {};
   for (const o of options) criteria[o.key] = o.desc;
@@ -60,7 +62,6 @@ function buildRequest(game, stage, qid, instructions, options) {
       board_rows: boardRows(game.board),
     },
     questions: { [qid]: { type: "choice", instructions, criteria } },
-    seed: 42,
   };
 }
 
@@ -281,10 +282,34 @@ class Controller {
     $("status").textContent = text;
   }
 
+  // Run one decision stage. A `choice` needs >= 2 options, so when only one
+  // placement is possible we pick it directly instead of asking the model
+  // (a single-option choice is rejected as malformed).
+  async runStage(stage, qid, instructions, choices) {
+    if (choices.length === 1) {
+      const only = choices[0];
+      const decision = {
+        choiceKey: only.key,
+        probabilities: { [only.key]: 1 },
+        confidence: 1,
+        latency_ms: 0,
+        request: null,
+        response: { auto_selected: "only one option available" },
+      };
+      renderDecision(stage, choices, decision);
+      return only;
+    }
+    const body = buildRequest(this.game, stage, qid, instructions, choices);
+    const decision = await decide(this.config(), body, qid, choices);
+    this.decisions += 1;
+    this.recordLatency(decision.latency_ms);
+    renderDecision(stage, choices, decision);
+    return choices.find((c) => c.key === decision.choiceKey) || choices[0];
+  }
+
   // Two structured decisions, then steer the piece into position.
   async decidePiece() {
     const g = this.game;
-    const cfg = this.config();
 
     // 1. orientation
     const oriOpts = g.orientationOptions();
@@ -298,39 +323,36 @@ class Controller {
       features: o.best.features,
       desc: `${orientLabel(o.rotation)}: best landing ${feat(o.best.features)}.`,
     }));
-    const oriBody = buildRequest(
-      g,
+    this.setStatus(`Asking JEV how to orient ${g.current}...`);
+    const oriPick = await this.runStage(
       "orientation",
       "rotate",
       "You are playing Tetris. Choose how to orient the current piece before it " +
         "falls. The landing column is chosen in the next decision.",
       orientChoices
     );
-    this.setStatus(`Asking JEV how to orient ${g.current}...`);
-    const d1 = await decide(cfg, oriBody, "rotate", orientChoices);
-    this.decisions += 1;
-    this.recordLatency(d1.latency_ms);
-    let rot = Number(d1.choiceKey);
+    let rot = Number(oriPick.key);
     if (!Number.isInteger(rot) || rot < 0 || rot >= rotationCount(g.current)) {
       rot = oriOpts[0].rotation;
     }
-    renderDecision("orientation", orientChoices, d1);
-    // preview the orientation at the top before the column decision
-    g.rotation = rot;
+    g.rotation = rot; // preview the orientation at the top
     this.render();
     await sleep(260);
 
     // 2. landing column
-    const cols = g.columnOptions(rot);
-    const colChoices = cols.map((p) => ({
+    const colChoices = g.columnOptions(rot).map((p) => ({
       key: String(p.left),
       label: columnLabel(p.left),
       features: p.features,
       desc: `move ${p.left}: ${feat(p.features)}.`,
       ox: p.ox,
     }));
-    const colBody = buildRequest(
-      g,
+    if (colChoices.length === 0) {
+      g.over = true;
+      return;
+    }
+    this.setStatus(`Asking JEV which column to drop ${g.current} into...`);
+    const pick = await this.runStage(
       "column",
       "move",
       "Choose the landing column for the current piece. After this it falls " +
@@ -338,12 +360,6 @@ class Controller {
         "low flat stack with the fewest holes.",
       colChoices
     );
-    this.setStatus(`Asking JEV which column to drop ${g.current} into...`);
-    const d2 = await decide(cfg, colBody, "move", colChoices);
-    this.decisions += 1;
-    this.recordLatency(d2.latency_ms);
-    let pick = colChoices.find((c) => c.key === d2.choiceKey) || colChoices[0];
-    renderDecision("column", colChoices, d2);
     g.applyDecision(rot, pick.ox);
     this.decided = true;
     this.updateStats();
